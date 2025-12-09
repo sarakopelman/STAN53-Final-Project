@@ -9,22 +9,233 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Fixing directory for markdown file
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r wd-check, echo=TRUE}
+getwd()
+list.files()
+file.exists("Data/sweden_returns_merged.csv")
 ```
 
-## Including Plots
+## Loading data
 
-You can also embed plots, for example:
+```{r}
+library(dplyr)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+df <- read.csv(file.path("..", "Data", "sweden_returns_merged.csv"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Choosing time period: 2019 - 2021
+
+```{r}
+df_2019_2021 <- df %>%
+  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
+  filter(X >= as.Date("2019-01-01"),
+         X <= as.Date("2021-12-31"))
+
+```
+
+## Checking for missing values
+
+```{r}
+na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
+na_counts[na_counts > 0]
+```
+
+## Removing all assets that have number of NA > 1 for time period
+
+```{r}
+na_counts <- colSums(is.na(df_2019_2021))
+keep_cols <- names(na_counts)[na_counts <= 1]
+keep_cols <- union("X", setdiff(keep_cols, "X"))  # ensure X stays first/kept
+df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
+```
+
+## Interpolating/Extrapolating the two missing values for the two assets with only one value missing
+
+```{r}
+df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
+df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
+df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
+```
+
+## Finding groups through Hierarchical clustering
+
+```{r}
+R <- as.matrix(df_clean[ , setdiff(names(df_clean), "X")])
+
+# if you still have any NA, decide how to handle:
+colSums(is.na(R))[colSums(is.na(R)) > 0]
+
+```
+
+```{r}
+library(corpcor)
+
+C <- corpcor::cor.shrink(R)  # shrinkage correlation
+
+```
+
+```{r}
+D  <- as.dist(sqrt((1 - C) / 2))
+hc <- hclust(D, method = "ward.D2")
+plot(hc, labels = FALSE, main = "Correlation-based clusters (Ward)")
+
+```
+## Checking different values of K
+
+```{r}
+Ks <- c(6, 8, 10, 12, 15, 20)
+
+op <- par(mfrow = c(ceiling(length(Ks)/2), 2), mar = c(3, 2, 3, 1))
+for (k in Ks) {
+  plot(hc, labels = FALSE, main = paste("Cut at K =", k))
+  rect.hclust(hc, k = k, border = 2:(k+1))
+}
+par(op)
+
+```
+
+
+## Choosing number of clusters and creating table with number of stocks within each cluster
+
+```{r}
+k <- 15
+clusters <- cutree(hc, k = k)
+table(clusters)
+
+```
+
+## Option A: averaging standardized stocks within each cluster
+
+```{r}
+assets <- setdiff(names(df_2019_2021), "X")
+R <- as.matrix(df_2019_2021[, assets])
+
+# clusters: named integer vector, names(clusters) == assets
+# e.g. clusters <- cutree(hc_assets, k = 12); names(clusters) <- assets
+
+Rz <- scale(R)  # center/scale each asset
+
+cluster_ids <- sort(unique(clusters))
+Y <- sapply(cluster_ids, function(k) rowMeans(Rz[, clusters == k, drop = FALSE]))
+
+colnames(Y) <- paste0("cluster_", cluster_ids)
+Y <- as.data.frame(Y)
+Y$X <- df_2019_2021$X
+
+```
+
+## Option B: First principal component score within each cluster
+
+We start off by trying to standardize with GARCH(1,1) and t-distributed innovations
+
+```{r}
+library(rugarch) # For GARCH(1,1)
+
+# GARCH(1,1) with Student-t innovations
+spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = c(0, 0), include.mean = TRUE),
+  distribution.model = "std"
+)
+
+pc1_factor_garch <- function(M) {
+  # M: T x n matrix for ONE cluster (no NAs, no constant columns)
+  Z <- sapply(seq_len(ncol(M)), function(j) {
+    fit <- ugarchfit(spec = spec, data = as.numeric(M[, j]), solver = "hybrid")
+    as.numeric(residuals(fit, standardize = TRUE))
+  })
+
+  p <- prcomp(Z, center = TRUE, scale. = FALSE)
+  as.numeric(scale(p$x[, 1]))  # PC1 time series (standardized)
+}
+
+cluster_ids <- sort(unique(clusters))
+Y_garch <- sapply(cluster_ids, function(k) pc1_factor_garch(R[, clusters == k, drop = FALSE]))
+
+colnames(Y_garch) <- paste0("cluster_", cluster_ids)
+Y_garch <- as.data.frame(Y_garch)
+Y_garch$X <- df_clean$X
+
+```
+
+## Checking normality assumption
+
+```{r}
+qqnorm(Y_garch$cluster_1)
+qqline(Y_garch$cluster_1, col = "red")
+```
+We now try the same thing but with standardizing through the Stochastic Volatility model (Taylor 82)
+
+```{r}
+library(stochvol) # For Stochastic Volatility
+library(xts)
+
+# --- SV-standardize one xts column (your Taylor-style SV) ---
+sv_standardize_xts <- function(r_xts, draws = 2000, burnin = 500) {
+  r_xts <- na.omit(r_xts)
+  y <- as.numeric(r_xts)
+  y <- y - mean(y)
+
+  fit <- svsample(y, draws = draws, burnin = burnin, quiet = TRUE)
+  sig_hat <- colMeans(vola(fit))   # posterior mean sigma_t
+
+  z <- y / sig_hat
+  xts(z, order.by = index(r_xts))
+}
+
+# --- PC1 factor from SV-standardized residuals for one cluster ---
+pc1_factor_sv <- function(M_xts, draws = 2000, burnin = 500) {
+  Z_xts <- do.call(merge, lapply(colnames(M_xts), function(nm) {
+    z <- sv_standardize_xts(M_xts[, nm, drop = FALSE], draws = draws, burnin = burnin)
+    colnames(z) <- nm
+    z
+  }))
+
+  Z <- coredata(Z_xts)
+  p <- prcomp(Z, center = TRUE, scale. = FALSE)
+  as.numeric(scale(p$x[, 1]))  # PC1 time series
+}
+
+assets <- setdiff(names(df_clean), "X")
+R_xts <- xts(as.matrix(df_clean[, assets]), order.by = df_clean$X)
+
+cluster_ids <- sort(unique(clusters))
+
+Y_sv <- sapply(cluster_ids, function(k) {
+  nm <- names(clusters)[clusters == k]
+  pc1_factor_sv(R_xts[, nm, drop = FALSE], draws = 2000, burnin = 500)
+})
+colnames(Y_sv) <- paste0("cluster_", cluster_ids)
+
+Y_sv <- as.data.frame(Y_sv)
+Y_sv$X <- df_clean$X
+```
+
+
+```{r}
+qqnorm(Y_sv$cluster_1)
+qqline(Y_sv$cluster_1, col = "red")
+```
+```{r}
+par(ask = TRUE)
+cols <- grep("^cluster_", names(Y_sv), value = TRUE)
+
+for (nm in cols) {
+  qqnorm(Y_sv[[nm]], main = nm)
+  qqline(Y_sv[[nm]], col = "red")
+}
+par(ask = FALSE)
+
+```
+
+Stochastic Volatility produces more Gaussian log returns than GARCH(1,1). We now move on to modeling the standardized stocks with time-varying GLASSO
+
+```{r}
+
+```
+
+
+
+
