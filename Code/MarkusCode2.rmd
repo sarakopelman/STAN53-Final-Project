@@ -1,0 +1,328 @@
+---
+title: "MarkusCode2"
+author: "Markus Gerholm"
+date: "2025-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Trying a longer time period
+
+## Fixing directory for markdown file
+
+```{r wd-check, echo=TRUE}
+getwd()
+list.files()
+file.exists("Data/sweden_returns_merged.csv")
+```
+
+## Loading data
+
+```{r}
+library(dplyr)
+
+df <- read.csv(file.path("..", "Data", "sweden_returns_merged.csv"))
+```
+
+## Choosing time period: 2019 - 2021
+
+```{r}
+df_2019_2022 <- df %>%
+  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
+  filter(X >= as.Date("2019-01-01"),
+         X <= as.Date("2022-12-31"))
+
+```
+
+## Checking for missing values
+
+```{r}
+na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
+na_counts[na_counts > 0]
+```
+
+## Removing all assets that have number of NA > 1 for time period
+
+```{r}
+na_counts <- colSums(is.na(df_2019_2022))
+keep_cols <- names(na_counts)[na_counts <= 1]
+keep_cols <- union("X", setdiff(keep_cols, "X"))  # ensure X stays first/kept
+df_clean <- df_2019_2022 %>% select(all_of(keep_cols))
+df_clean$RO.ST[219] <- 0
+df_clean$INCOAX.ST[1] <- 0
+```
+
+## Standardizing
+
+```{r}
+library(stochvol)
+library(xts)
+
+sv_standardize_xts <- function(r_xts, draws = 2000, burnin = 500) {
+  y <- as.numeric(r_xts)
+  y <- y - mean(y)
+
+  fit <- svsample(y, draws = draws, burnin = burnin, quiet = TRUE)
+  sig_hat <- colMeans(vola(fit))
+  z <- y / sig_hat
+  xts(z, order.by = index(r_xts))
+}
+
+assets <- setdiff(names(df_clean), "X")
+R_xts <- xts(as.matrix(df_clean[, assets]), order.by = df_clean$X)
+
+# SV-standardize EVERY asset column
+Z_xts <- do.call(merge, lapply(colnames(R_xts), function(nm) {
+  z <- sv_standardize_xts(R_xts[, nm, drop = FALSE], draws = 2000, burnin = 500)
+  colnames(z) <- nm
+  z
+}))
+
+# convert to a data.frame with dates
+Z_df <- data.frame(X = as.Date(index(Z_xts)), coredata(Z_xts))
+
+```
+
+## Zero mean
+
+```{r}
+Z_0 <- coredata(Z_xts)
+Z_0 <- scale(Z_0, center = TRUE, scale = FALSE)
+```
+
+```{r}
+library(igraph)
+library(tvsfglasso)
+Y <- t(Z_0) # row = assets, cols = time points
+N = ncol(Y) # number of time points
+pos <- 1:N # length of data as sequence
+res <- tvglasso(Y = Y, N = N, pos = pos, rep = FALSE, lambda = 0.5, h = 0.025) # fitting tvglasso model
+
+```
+
+```{r}
+A1 <- res$icov[[1]]
+AN <- res$icov[[300]]
+
+A1[A1 != 0] <- 1
+AN[AN != 0] <- 1
+
+g1_tv <- graph_from_adjacency_matrix(A1, mode = "undirected", diag = FALSE) # precision matrix at time 1
+gN_tv <- graph_from_adjacency_matrix(AN, mode = "undirected", diag = FALSE) # precision matrix at time N
+```
+
+```{r}
+# Partial correlation from precision
+pcor_from_icov <- function(M){
+  d <- sqrt(diag(M))
+  P <- -M / (d %o% d)
+  diag(P) <- NA
+  P
+}
+
+t0 <- 300
+P  <- pcor_from_icov(res$icov[[t0]])
+
+# color scale: min -> darkblue, 0 -> white, max -> red
+cols   <- colorRampPalette(c("darkblue", "white", "red"))(256)
+zlim   <- range(P, na.rm = TRUE)
+breaks <- seq(zlim[1], zlim[2], length.out = length(cols) + 1)
+
+par(mar = c(1, 1, 2, 1))
+image(
+  t(P[nrow(P):1, ]),           # nicer orientation
+  col = cols, breaks = breaks,
+  axes = FALSE, useRaster = TRUE,
+  main = paste0("Partial correlation heatmap (t = ", t0, ")")
+)
+
+# Optional: add axis tick marks (comment out if too cluttered)
+# axis(1); axis(2)
+
+```
+```{r}
+library(gifski)
+
+pcor_from_icov <- function(M) {
+  d <- sqrt(diag(M))
+  P <- -M / (d %o% d)
+  diag(P) <- 0
+  P
+}
+
+cap <- 0.10  # try 0.05, 0.08, 0.10, 0.15
+zlim <- c(-cap, cap)
+
+cols   <- colorRampPalette(c("darkblue","white","red"))(256)
+breaks <- seq(zlim[1], zlim[2], length.out = length(cols) + 1)
+
+Ts <- seq(1, length(res$icov), by = 1)
+
+save_gif({
+  par(mar = c(0,0,2,0))
+  for (t in Ts) {
+    P <- pcor_from_icov(res$icov[[t]])
+    P <- pmax(pmin(P, zlim[2]), zlim[1])   # clamp
+    image(t(P[nrow(P):1, ]), col=cols, breaks=breaks, axes=FALSE, useRaster=TRUE,
+          main=paste0("Partial correlation (capped at ±", cap, "), t=", t))
+  }
+}, gif_file = "pcor_heatmap_capped.gif", width = 900, height = 700, delay = 0.06)
+
+```
+
+```{r}
+Ks <- c(1,200,300,400,500,600,700,800,900,1000)
+
+# --- 0/1-code then count nonzeros in upper triangle (undirected edges) ---
+edge_counts_bin <- sapply(Ks, function(k) {
+  A <- res$icov[[k]]
+  A[A != 0] <- 1
+  diag(A) <- 0
+  sum(A[upper.tri(A)] != 0)
+})
+names(edge_counts_bin) <- paste0("t=", Ks)
+edge_counts_bin
+
+# --- tolerance-based count on the raw precision matrices (recommended sanity check) ---
+tol <- 1e-6
+edge_counts_tol <- sapply(Ks, function(k) {
+  M <- res$icov[[k]]
+  sum(abs(M)[upper.tri(M)] > tol)
+})
+names(edge_counts_tol) <- paste0("t=", Ks)
+edge_counts_tol
+
+```
+```{r}
+
+```
+
+
+```{r}
+edge_counts_all <- sapply(seq_along(res$icov), function(k) {
+  M <- res$icov[[k]]
+  sum(abs(M)[upper.tri(M)] > 1e-6)
+})
+
+plot(edge_counts_all, type = "l", xlab = "t", ylab = "# edges (upper tri)")
+
+```
+
+```{r}
+k <- 20
+vol_mat <- apply(Z_0, 2, function(x) zoo::rollapply(x, width = k, sd, align = "right", fill = NA))
+
+vol_mean <- rowMeans(vol_mat, na.rm = TRUE)      # average vol across assets
+vol_med  <- apply(vol_mat, 1, median, na.rm = TRUE)
+
+plot(vol_mean, type = "l", xlab = "time", ylab = "rolling sd",
+     main = paste("Average rolling volatility (k=", k, ")", sep=""))
+lines(vol_med, lty = 2)
+legend("topright", legend = c("mean", "median"), lty = c(1,2), bty = "n")
+
+```
+```{r}
+Ks <- seq_along(res$icov)
+
+# edge count with tolerance
+tol <- 1e-6
+edge_counts <- sapply(Ks, function(k) {
+  M <- res$icov[[k]]
+  sum(abs(M)[upper.tri(M)] > tol)
+})
+
+# mean absolute partial correlation (scale-free)
+mean_abs_pcor <- sapply(Ks, function(k) {
+  M <- res$icov[[k]]
+  d <- sqrt(diag(M))
+  P <- -M / (d %o% d)
+  diag(P) <- 0
+  mean(abs(P)[upper.tri(P)], na.rm = TRUE)
+})
+
+plot(edge_counts, type="l", xlab="time", ylab="# edges", main="Network density over time")
+plot(mean_abs_pcor, type="l", xlab="time", ylab="mean |partial corr|", main="Dependency strength over time")
+
+```
+
+```{r}
+Ks <- seq_along(res$icov)
+
+count_pcor_thr <- function(M, thr=0.05) {
+  d <- sqrt(diag(M))
+  P <- -M / (d %o% d)
+  diag(P) <- 0
+  sum(abs(P)[upper.tri(P)] > thr)
+}
+
+pcor_edges_002 <- sapply(Ks, \(k) count_pcor_thr(res$icov[[k]], thr=0.02))
+pcor_edges_005 <- sapply(Ks, \(k) count_pcor_thr(res$icov[[k]], thr=0.05))
+
+plot(pcor_edges_002, type="l", xlab="time", ylab="# edges", main="Edges with |pcor| > 0.02")
+plot(pcor_edges_005, type="l", xlab="time", ylab="# edges", main="Edges with |pcor| > 0.05")
+
+```
+```{r}
+library(igraph)
+library(gifski)
+
+# --- assumes `res` already exists ---
+N   <- length(res$icov)
+pos <- seq_len(N)   # or your existing pos if you have one
+
+# Convert each precision matrix to a binary adjacency matrix
+# (If you prefer strict nonzero like your example, keep M != 0.
+#  If you want to avoid tiny numerical noise, use abs(M) > tol instead.)
+tol <- 1e-10
+A_list <- lapply(res$icov, function(M) {
+  #A <- (abs(M) > tol) * 1   # <- change to (M != 0) * 1 if you want exact nonzero
+  A <- (M != 0) * 1
+  diag(A) <- 0
+  A
+})
+
+# Build graphs for each time point
+G_list <- lapply(A_list, function(A)
+  graph_from_adjacency_matrix(A, mode = "undirected", diag = FALSE)
+)
+
+# Stable layout from t = 1 (your choice)
+set.seed(1)
+#lay <- layout_with_fr(G_list[[1]])
+lay <- layout_on_grid(G_list[[1]])
+
+# Your zoom + fixed view window (so frames don't jump)
+zoom <- 1
+xlim <- mean(range(lay[,1])) + (range(lay[,1]) - mean(range(lay[,1]))) * zoom
+ylim <- mean(range(lay[,2])) + (range(lay[,2]) - mean(range(lay[,2]))) * zoom
+
+# Save animation as GIF
+save_gif({
+  op <- par(mar = c(0, 0, 0, 0))  # remove margins
+  on.exit(par(op), add = TRUE)
+
+  for (t in seq_along(G_list)) {
+    plot(
+      G_list[[t]],
+      layout = lay,
+      vertex.size  = 5,
+      edge.width   = 1,
+      vertex.label = NA,
+      rescale = FALSE,
+      xlim = xlim,
+      ylim = ylim
+    )
+
+    # Optional time label without adding margins:
+     usr <- par("usr")
+     text(usr[1], usr[4], labels = paste0("t = ", pos[t]),
+          adj = c(0, 1), xpd = NA, cex = 1)
+  }
+}, gif_file = "tvglasso_evolution5.gif", width = 800, height = 800, delay = 0.08)
+
+```
+
+## Color coding edges (heatmap with 3 categories ish)
