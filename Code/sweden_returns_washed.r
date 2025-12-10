@@ -4,6 +4,7 @@ library(dplyr)
 
 df <- read.csv("Data/sweden_returns_merged.csv")
 
+colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
 ## Choosing time period: 2019 - 2021
 
 df_2019_2021 <- df %>%
