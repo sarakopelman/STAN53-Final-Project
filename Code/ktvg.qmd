@@ -1,0 +1,435 @@
+---
+title: "ktvg"
+format: html
+---
+
+```{r}
+library(fitHeavyTail)
+library(xts)
+library(quantmod)
+library(igraph)
+library(readr)
+library(spectralGraphTopology)
+library(combinat)
+library(tvgraph)
+```
+
+```{r}
+setwd("..")
+set.seed(42)
+source("Code/sweden_returns_washed.R")
+
+```
+
+```{r}
+log_returns <- xts(df_clean[ , -1], order.by = as.Date(df_clean$X))
+log_returns <- log_returns[, colSums(is.na(log_returns)) == 0]
+library(readxl)
+library(dplyr)
+
+# Read sectors
+sectors_df <- read_excel("../Data/sectors.xlsx")  # Columns: Symbol, Sector
+
+# Tickers from log_returns
+tickers <- colnames(log_returns)
+
+# Normalize
+tickers <- toupper(trimws(tickers))
+sectors_df$Symbol <- toupper(trimws(sectors_df$Symbol))
+
+# Add .ST to match Yahoo tickers
+sectors_df$Yahoo_Ticker <- paste0(sectors_df$Symbol, ".ST")
+
+# Create a named vector for mapping
+sector_map <- setNames(sectors_df$Sector, sectors_df$Yahoo_Ticker)
+
+# Map tickers to sectors
+ticker_sectors <- sector_map[tickers]
+
+# Identify tickers without a sector
+missing_tickers <- tickers[is.na(ticker_sectors)]
+if(length(missing_tickers) > 0){
+  cat("These tickers have no matching sector:\n")
+  print(missing_tickers)
+}
+
+```
+
+```{r}
+library(fitHeavyTail)
+library(xts)
+library(quantmod)
+library(igraph)
+library(readr)
+library(spectralGraphTopology)
+library(combinat)
+library(tvgraph)
+library(dplyr)
+
+set.seed(5)
+
+# -----------------------------
+# Number of stocks to select
+
+# -----------------------------
+# Number of stocks
+p <- 40
+
+# Frame (window) length
+winLen <- 300
+# -----------------------------
+
+# Select 100 random stocks from log_returns
+selected_stocks <- sample(colnames(log_returns), p)
+stock_prices <- log_returns[, selected_stocks]
+
+# -----------------------------
+# Map tickers to sectors using your mapping
+stock_sectors <- ticker_sectors[selected_stocks]
+stock_sectors_index <- as.numeric(as.factor(stock_sectors))
+
+# Automatically determine number of sectors
+q <- length(unique(stock_sectors_index))
+q <- 10  # override if desired
+
+cat("Number of sectors (clusters) selected: ", q, "\n")
+
+
+# -----------------------------
+# Total number of windows
+Nday <- nrow(stock_prices)
+Nwin <- Nday %/% winLen
+
+# -----------------------------
+# Initialize adjacency / weight matrices
+data_frame <- stock_prices[1:winLen, ]
+S_cov <- cor(scale(data_frame))
+w <- spectralGraphTopology:::w_init('naive', MASS::ginv(S_cov))
+w0 <- w
+A0 <- A(w)
+A0 <- A0 / rowSums(A0)
+w0 <- spectralGraphTopology:::Ainv(A0)
+w0 <- w0 / sum(w0)
+w_lagged <- 0
+
+graphs_list <- vector("list", Nwin)
+
+# Metrics
+accuracy_vec <- rep(0, Nwin)
+purity_vec <- rep(0, Nwin)
+modularity_vec <- rep(0, Nwin)
+balanced_vec <- rep(0, Nwin)
+ARI_vec <- rep(0, Nwin)
+GINI_vec <- rep(0, Nwin)
+rank_mat <- rep(0, Nwin)
+
+# -----------------------------
+# TV-Graph Learning over windows
+for (i in 1:Nwin) {
+  data_frame <- stock_prices[((i-1)*winLen + 1):(i*winLen), ]
+  nu <- fit_mvt(data_frame, nu = "MLE-diag-resampled")$nu
+  
+  graphs_list[[i]] <- learn_kcomp_heavytail_TV_graph_online(
+    scale(data_frame),
+    k = q,
+    heavy_type = "student",
+    nu = nu,
+    sigma_e = exp(0.1),
+    w_lagged = w_lagged,
+    rho = 3,
+    d = 1,
+    w0 = w0,
+    update_eta = TRUE,
+    maxiter = 40,
+    verbose = TRUE
+  )
+  
+  w <- spectralGraphTopology:::Ainv(graphs_list[[i]]$adjacency)
+  w_lagged <- w
+  w0 <- w
+  
+  graph_net <- graph_from_adjacency_matrix(graphs_list[[i]]$adjacency, mode = "undirected", weighted = TRUE)
+  
+  # Evaluate clustering against sector labels
+  metric <- evaluate_clustering(graph_net, stock_sectors_index, p, q)
+  accuracy_vec[i] <- metric$accuracy
+  purity_vec[i] <- metric$purity
+  modularity_vec[i] <- metric$mod
+  balanced_vec[i] <- metric$balanced
+  GINI_vec[i] <- metric$GINI
+  ARI_vec[i] <- metric$ARI
+  
+  rank_mat[i] <- Matrix::rankMatrix(graphs_list[[i]]$laplacian)[1]
+}
+
+# -----------------------------
+# Plot graphs AFTER loop
+Coords <- NULL
+implied_clusters <- TRUE
+
+for (i in 1:Nwin) {
+  id <- Nwin - i + 1
+  gplt <- plot_graph(
+    graphs_list[[id]]$adjacency,
+    stock_sectors_index,
+    colnames(stock_prices),
+    Coords = Coords,
+    implied_clusters = implied_clusters
+  )
+  title(main = paste("frame", id))
+  Coords <- gplt$Coords
+}
+
+# -----------------------------
+# Print final metrics
+cat("ACC: ", metric$accuracy, "\n")
+cat("PUR: ", metric$purity, "\n")
+cat("MOD: ", metric$mod, "\n")
+cat("ARI: ", metric$ARI, "\n")
+
+# Plot metrics across frames interactively
+metrics <- cbind(accuracy_vec, purity_vec, modularity_vec, ARI_vec)
+matplot(metrics, type = "b", pch = 15:18, col = 1:4, ylab = "Metrics", xlab = "Frame")
+legend("bottomleft", inset=0.01, legend=c("Accuracy", "Purity", "Modularity", "ARI"),
+       col=1:4, pch=15:18, bg="white", horiz=F)
+
+```
+
+```{r}
+set.seed(42)
+
+# -----------------------------
+# PARAMETERS
+p <- 100            # number of stocks to sample
+num_sectors <- 8    # number of sectors to sample
+winLen <- 200
+# -----------------------------
+
+# All tickers + their sectors
+all_tickers <- colnames(log_returns)
+all_sectors <- ticker_sectors[all_tickers]
+
+# Count how many stocks each sector has
+sector_counts <- table(all_sectors)
+
+# -----------------------------
+# 1. Sample sectors proportionally to their size
+# -----------------------------
+sampled_sectors <- sample(
+  names(sector_counts),
+  size = num_sectors,
+  replace = FALSE,
+  prob = as.numeric(sector_counts)  # proportional sampling
+)
+
+cat("Sampled sectors:\n")
+print(sampled_sectors)
+
+# Filter tickers to only those sectors
+tickers_in_sampled <- all_tickers[all_sectors %in% sampled_sectors]
+sectors_in_sampled <- all_sectors[all_sectors %in% sampled_sectors]
+
+# -----------------------------
+# 2. Sample stocks proportionally inside sampled sectors
+# -----------------------------
+sub_counts <- table(sectors_in_sampled)
+sub_prop <- sub_counts / sum(sub_counts)
+
+stocks_per_sector <- round(sub_prop * p)
+
+# Fix rounding so total = p
+diff_val <- p - sum(stocks_per_sector)
+if (diff_val != 0) {
+  max_sector <- names(which.max(sub_counts))
+  stocks_per_sector[max_sector] <- stocks_per_sector[max_sector] + diff_val
+}
+
+cat("Stocks per sector:\n")
+print(stocks_per_sector)
+
+# -----------------------------
+# 3. Sample stocks accordingly
+# -----------------------------
+selected_stocks <- c()
+
+for (sector in names(stocks_per_sector)) {
+  candidates <- names(all_sectors[all_sectors == sector])
+  n_to_sample <- stocks_per_sector[[sector]]
+  
+  if (length(candidates) < n_to_sample) {
+    warning(paste("Sector", sector, "too small — taking all available."))
+    selected <- candidates
+  } else {
+    selected <- sample(candidates, n_to_sample)
+  }
+  
+  selected_stocks <- c(selected_stocks, selected)
+}
+
+selected_stocks <- selected_stocks[1:p]
+
+# -----------------------------
+# 4. Final mappings
+# -----------------------------
+stock_prices <- log_returns[, selected_stocks]
+stock_sectors <- ticker_sectors[selected_stocks]
+stock_sectors_index <- as.numeric(as.factor(stock_sectors))
+
+q <- length(unique(stock_sectors_index))
+cat("Final number of clusters: ", q, "\n")
+
+# -----------------------------
+# Total number of windows
+Nday <- nrow(stock_prices)
+Nwin <- Nday %/% winLen
+
+# -----------------------------
+# Initialize adjacency / weight matrices
+data_frame <- stock_prices[1:winLen, ]
+S_cov <- cor(scale(data_frame))
+w <- spectralGraphTopology:::w_init('naive', MASS::ginv(S_cov))
+w0 <- w
+A0 <- A(w)
+A0 <- A0 / rowSums(A0)
+w0 <- spectralGraphTopology:::Ainv(A0)
+w0 <- w0 / sum(w0)
+w_lagged <- 0
+
+graphs_list <- vector("list", Nwin)
+
+# Metrics
+accuracy_vec <- rep(0, Nwin)
+purity_vec <- rep(0, Nwin)
+modularity_vec <- rep(0, Nwin)
+balanced_vec <- rep(0, Nwin)
+ARI_vec <- rep(0, Nwin)
+GINI_vec <- rep(0, Nwin)
+rank_mat <- rep(0, Nwin)
+
+# -----------------------------
+# TV-Graph Learning over windows
+for (i in 1:Nwin) {
+  data_frame <- stock_prices[((i-1)*winLen + 1):(i*winLen), ]
+  nu <- fit_mvt(data_frame, nu = "MLE-diag-resampled")$nu
+  
+  graphs_list[[i]] <- learn_kcomp_heavytail_TV_graph_online(
+    scale(data_frame),
+    k = q,
+    heavy_type = "student",
+    nu = nu,
+    sigma_e = exp(0.1),
+    w_lagged = w_lagged,
+    rho = 3,
+    d = 1,
+    w0 = w0,
+    update_eta = TRUE,
+    maxiter = 40,
+    verbose = TRUE
+  )
+  
+  w <- spectralGraphTopology:::Ainv(graphs_list[[i]]$adjacency)
+  w_lagged <- w
+  w0 <- w
+  
+  graph_net <- graph_from_adjacency_matrix(graphs_list[[i]]$adjacency, mode = "undirected", weighted = TRUE)
+  
+  # Evaluate clustering against sector labels
+  metric <- evaluate_clustering(graph_net, stock_sectors_index, p, q)
+  accuracy_vec[i] <- metric$accuracy
+  purity_vec[i] <- metric$purity
+  modularity_vec[i] <- metric$mod
+  balanced_vec[i] <- metric$balanced
+  GINI_vec[i] <- metric$GINI
+  ARI_vec[i] <- metric$ARI
+  
+  rank_mat[i] <- Matrix::rankMatrix(graphs_list[[i]]$laplacian)[1]
+}
+
+# -----------------------------
+# Plot graphs AFTER loop
+Coords <- NULL
+implied_clusters <- TRUE
+
+for (i in 1:Nwin) {
+  id <- Nwin - i + 1
+  gplt <- plot_graph(
+    graphs_list[[id]]$adjacency,
+    stock_sectors_index,
+    colnames(stock_prices),
+    Coords = Coords,
+    implied_clusters = implied_clusters
+  )
+  title(main = paste("frame", id))
+  Coords <- gplt$Coords
+}
+
+# -----------------------------
+# Print final metrics
+cat("ACC: ", metric$accuracy, "\n")
+cat("PUR: ", metric$purity, "\n")
+cat("MOD: ", metric$mod, "\n")
+cat("ARI: ", metric$ARI, "\n")
+
+# Plot metrics across frames interactively
+metrics <- cbind(accuracy_vec, purity_vec, modularity_vec, ARI_vec)
+matplot(metrics, type = "b", pch = 15:18, col = 1:4, ylab = "Metrics", xlab = "Frame")
+legend("bottomleft", inset=0.01, legend=c("Accuracy", "Purity", "Modularity", "ARI"),
+       col=1:4, pch=15:18, bg="white", horiz=F)
+
+```
+
+```{r}
+# Coords allows consistent layout across frames
+Coords <- NULL
+implied_clusters <- TRUE
+
+# Loop through the learned graphs and plot them
+for (i in 1:Nwin) {
+  id <- Nwin - i + 1  # Optional: reverse order to match your original code
+  gplt <- plot_graph(
+    graphs_list[[id]]$adjacency,     # adjacency matrix of the graph
+    stock_sectors_index,             # true sector labels
+    colnames(stock_prices),          # node names
+    Coords = Coords,                 # previous coordinates for consistent layout
+    implied_clusters = implied_clusters
+  )
+  
+  # Add a title showing the frame number
+  title(main = paste("Frame", id))
+  
+  # Save coordinates for next plot
+  Coords <- gplt$Coords
+}
+
+```
+
+```{r}
+library(igraph)
+
+graph_net <- graph_from_adjacency_matrix(graphs_list[[i]]$adjacency, mode = "undirected", weighted = TRUE)
+
+# Detect clusters using Louvain (or any community detection method)
+communities <- cluster_louvain(graph_net)
+
+# Cluster assignment for each node
+cluster_assignments <- membership(communities)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# Suppose you have cluster_assignments and stock_sectors
+cluster_sector_table <- table(Cluster = cluster_assignments, Sector = stock_sectors)
+
+# Convert to data frame
+cluster_sector_df <- as.data.frame(cluster_sector_table)
+
+# Optional: sort within each cluster by count
+cluster_sector_df <- cluster_sector_df %>%
+  group_by(Cluster) %>%
+  arrange(Cluster, desc(Freq)) %>%
+  ungroup()
+
+cluster_sector_df
+```
