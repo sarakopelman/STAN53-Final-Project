@@ -2,7 +2,7 @@
 
 library(dplyr)
 
-df <- read.csv(file.path("..", "Data", "sweden_returns_merged.csv"))
+df <- read.csv("Data/sweden_returns_merged.csv")
 
 ## Choosing time period: 2019 - 2021
 
@@ -29,3 +29,4 @@ df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
 df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
 df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
 df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
+
