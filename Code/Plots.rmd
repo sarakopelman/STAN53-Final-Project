@@ -1,0 +1,393 @@
+---
+title: "Plots"
+author: "Markus Gerholm"
+date: "2025-12-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading and cleaning data
+
+```{r}
+## Loading data
+
+library(dplyr)
+
+df <- read.csv(file.path("..", "Data", "sweden_returns_merged.csv"))
+
+#df <- read.csv("Data/sweden_returns_merged.csv")
+
+colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
+## Choosing time period: 2019 - 2021
+
+df_2019_2021 <- df %>%
+  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
+  filter(X >= as.Date("2019-01-01"),
+         X <= as.Date("2021-12-31"))
+## Checking for missing values
+
+na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
+na_counts[na_counts > 0]
+
+## Removing all assets that have number of NA > 1 for time period
+
+na_counts <- colSums(is.na(df_2019_2021))
+keep_cols <- names(na_counts)[na_counts <= 1]
+keep_cols <- union("X", setdiff(keep_cols, "X"))  # ensure X stays first/kept
+df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
+
+## Interpolating/Extrapolating the two missing values for the two assets with only one value missing
+
+df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
+df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
+df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "MTG.A.ST")] # removing this stock since it was only zeros
+```
+
+## png of all asset names
+
+```{r}
+library(gridExtra)
+library(grid)
+
+assets <- sort(colnames(df_clean))   # or rownames(df_clean)
+n_col  <- 20
+n_row  <- ceiling(length(assets) / n_col)
+
+mat <- matrix("", nrow = n_row, ncol = n_col)
+mat[1:length(assets)] <- assets
+colnames(mat) <- rep("", n_col)
+
+# shrink text with cex; lower = smaller text
+txt_cex <- 0.7   # try 0.5, 0.4, 0.3
+
+tt <- ttheme_minimal(
+  core = list(fg_params = list(cex = txt_cex)),
+  colhead = list(fg_params = list(cex = txt_cex))
+)
+
+tbl <- tableGrob(mat, rows = NULL, theme = tt)
+
+# make a bigger image so the tiny text is still readable when you insert it
+png("asset_names.png", width = 2400, height = 1400, res = 200)
+grid.draw(tbl)
+dev.off()
+
+```
+
+## Checking QQ plots of samples from data
+
+```{r}
+#set.seed(3)
+
+# date column
+df_clean$X <- as.Date(df_clean$X)   # adjust format if needed
+dates <- df_clean$X
+
+# pick 16 random assets (excluding date column)
+all_assets <- setdiff(colnames(df_clean), "X")
+assets_16  <- sample(all_assets, 20)
+
+# common ylim across all 16
+ylim_common <- range(df_clean[assets_16], na.rm = TRUE)
+
+# split into first and second half
+par(mfrow = c(4, 5), mar = c(3, 3, 2, 1))
+
+for (nm in assets_16) {
+  qqnorm(df_clean[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(df_clean[[nm]], col = "red")
+}
+```
+
+## some plots of the log returns
+
+```{r}
+set.seed(3)
+
+# date column
+df_clean$X <- as.Date(df_clean$X)   # adjust format if needed
+dates <- df_clean$X
+
+# pick 16 random assets (excluding date column)
+all_assets <- setdiff(colnames(df_clean), "X")
+assets_16  <- sample(all_assets, 16)
+
+# common ylim across all 16
+ylim_common <- range(df_clean[assets_16], na.rm = TRUE)
+
+# split into first and second half
+first_half  <- assets_16[1:8]
+second_half <- assets_16[9:16]
+```
+
+## Log returns of 8 stocks
+
+```{r}
+## First figure: first half (8 assets)
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in first_half) {
+  plot(dates, df_clean[[nm]],
+       type = "l",
+       main = nm,
+       xlab = "",
+       ylab = "",
+       xaxt = "n",
+       ylim = ylim_common,
+       col = "blue")
+  axis.Date(1,
+            at = seq(min(dates), max(dates), by = "year"),
+            format = "%Y",
+            cex.axis = 0.7)
+}
+```
+
+## Log returns of 8 stocks
+
+```{r}
+## Second figure: second half (8 assets)
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in second_half) {
+  plot(dates, df_clean[[nm]],
+       type = "l",
+       main = nm,
+       xlab = "",
+       ylab = "",
+       xaxt = "n",
+       ylim = ylim_common,
+       col = "blue")
+  axis.Date(1,
+            at = seq(min(dates), max(dates), by = "year"),
+            format = "%Y",
+            cex.axis = 0.7)
+}
+```
+
+## QQ-plots and QQ-line for the log returns
+
+## First half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in first_half) {
+  qqnorm(df_clean[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(df_clean[[nm]], col = "red")
+}
+```
+
+## Second half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in second_half) {
+  qqnorm(df_clean[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(df_clean[[nm]], col = "red")
+}
+
+```
+
+## Standardizing through Stochastic Volatility (Bayesian MCMC method for posterior distribution)
+
+```{r}
+library(stochvol)
+library(xts)
+
+sv_standardize_xts <- function(r_xts, draws = 4000, burnin = 1000) {
+  y <- as.numeric(r_xts)
+  y <- y - mean(y)
+
+  fit <- svsample(y, draws = draws, burnin = burnin, quiet = TRUE)
+  sig_hat <- colMeans(vola(fit))
+  z <- y / sig_hat
+  xts(z, order.by = index(r_xts))
+}
+
+assets <- setdiff(names(df_clean), "X")
+R_xts <- xts(as.matrix(df_clean[, assets]), order.by = df_clean$X)
+
+# SV-standardize EVERY asset column
+Z_xts <- do.call(merge, lapply(colnames(R_xts), function(nm) {
+  z <- sv_standardize_xts(R_xts[, nm, drop = FALSE], draws = 2000, burnin = 500)
+  colnames(z) <- nm
+  z
+}))
+
+# convert to a data.frame with dates
+Z_df <- data.frame(X = as.Date(index(Z_xts)), coredata(Z_xts))
+
+```
+
+## Q-Q plots after Stochastic Volatility standardized log returns
+
+## First half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in first_half) {
+  qqnorm(Z_df[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(Z_df[[nm]], col = "red")
+}
+```
+
+## Second half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in second_half) {
+  qqnorm(Z_df[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(Z_df[[nm]], col = "red")
+}
+```
+## Standardizing through GARCH(1,1)
+
+```{r}
+library(rugarch)
+
+## 1) GARCH(1,1) specification (Student-t innovations)
+spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = c(0, 0), include.mean = TRUE),
+  distribution.model = "std"
+)
+
+## 2) Function to GARCH-standardize each column of a T x n matrix/data.frame
+garch_standardize_matrix <- function(M, spec) {
+  M <- as.matrix(M)
+  Tn <- nrow(M)
+  nn <- ncol(M)
+  
+  Z <- sapply(seq_len(nn), function(j) {
+    x <- as.numeric(M[, j])
+    
+    # Fit GARCH(1,1); you can add tryCatch if some series fail
+    fit <- ugarchfit(spec = spec, data = x, solver = "hybrid")
+    
+    # Standardized residuals (epsilon_t / sigma_t)
+    as.numeric(residuals(fit, standardize = TRUE))
+  })
+  
+  colnames(Z) <- colnames(M)
+  Z
+}
+
+## 3) Apply to your asset returns in df_clean (exclude X)
+asset_cols <- setdiff(colnames(df_clean), "X")
+R_mat      <- as.matrix(df_clean[, asset_cols])
+
+Zgarch     <- garch_standardize_matrix(R_mat, spec = spec)
+Zgarch_df  <- as.data.frame(Zgarch)
+
+## 4) (Optional) add back the date column X
+Zgarch_df$X <- df_clean$X
+# If you want X first:
+Zgarch_df   <- Zgarch_df[, c("X", asset_cols)]
+
+```
+
+## Q-Q Plots of GARCH standardized log returns
+
+## First half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in first_half) {
+  qqnorm(Zgarch_df[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(Zgarch_df[[nm]], col = "red")
+}
+```
+
+
+## Second half
+
+```{r}
+par(mfrow = c(2, 4), mar = c(3, 3, 2, 1))
+
+for (nm in second_half) {
+  qqnorm(Zgarch_df[[nm]], main = paste("Q-Q Plot: ", nm))
+  qqline(Zgarch_df[[nm]], col = "red")
+}
+```
+
+## Ensuring zero mean
+
+```{r}
+Z_0 <- coredata(Z_xts)
+Z_0 <- scale(Z_0, center = TRUE, scale = FALSE)
+```
+
+## Checking normality over time
+
+```{r}
+asset <- "PADEL.ST"  # change to any column name
+x <- Z_df[[asset]]
+
+window_size <- 250
+n <- length(x)
+
+starts <- seq(1, n - window_size + 1, by = window_size)
+
+par(mfrow = c(2, 2), mar = c(3, 3, 2, 1))  # 6 panels per page
+
+for (i in seq_along(starts)) {
+  idx <- starts[i]:(starts[i] + window_size - 1)
+  x_win <- x[idx]
+
+  qqnorm(x_win,
+         main = paste0(asset, " | days ", idx[1], "–", idx[length(idx)]))
+  qqline(x_win, col = "red")
+}
+
+```
+
+```{r}
+asset <- "MTG.A.ST"  # change to any column name
+x <- Z_df[[asset]]
+
+window_size <- 250
+n <- length(x)
+
+starts <- seq(1, n - window_size + 1, by = window_size)
+
+par(mfrow = c(2, 2), mar = c(3, 3, 2, 1))  # 6 panels per page
+
+for (i in seq_along(starts)) {
+  idx <- starts[i]:(starts[i] + window_size - 1)
+  x_win <- x[idx]
+
+  qqnorm(x_win,
+         main = paste0(asset, " | days ", idx[1], "–", idx[length(idx)]))
+  qqline(x_win, col = "red")
+}
+
+```
+```{r}
+library(quantmod)
+start_date <- "2010-01-01"
+
+x <- getSymbols("MTG-A.ST", src = "yahoo", from = start_date, auto.assign = FALSE)
+plot(x, type = "l")
+```
+
+## Regular GLASSO on time intervals
+
+
+## Modelling time series through tvglasso
+
+```{r}
+library(igraph)
+library(tvsfglasso)
+Y <- t(Z_0) # row = assets, cols = time points
+N = ncol(Y) # number of time points
+pos <- 1:N # length of data as sequence
+res <- tvglasso(Y = Y, N = N, pos = pos, rep = FALSE, lambda = 0.5, h = 0.025) # fitting tvglasso model
+```

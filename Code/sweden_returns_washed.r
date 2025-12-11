@@ -10,7 +10,7 @@ colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
 df_2019_2021 <- df %>%
   mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
   filter(X >= as.Date("2019-01-01"),
-         X <= as.Date("2021-12-31"))
+         X <= as.Date("2022-12-31"))
 
 
 ## Checking for missing values
@@ -30,4 +30,5 @@ df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
 df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
 df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
 df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "MTG.A.ST")] # removing this stock since it was only zeros
 
