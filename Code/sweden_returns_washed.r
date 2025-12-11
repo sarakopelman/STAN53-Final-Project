@@ -31,4 +31,10 @@ df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
 df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
 df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
 df_clean <- df_clean[, setdiff(names(df_clean), "MTG.A.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "KOGO.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "G2M.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "HAKI.A.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "SBOK.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "KAKEL.ST")] # removing this stock since it was only zeros
+
 

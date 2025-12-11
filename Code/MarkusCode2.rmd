@@ -207,7 +207,7 @@ edge_counts_all <- sapply(seq_along(res$icov), function(k) {
   sum(abs(M)[upper.tri(M)] > 1e-6)
 })
 
-plot(edge_counts_all, type = "l", xlab = "t", ylab = "# edges (upper tri)")
+plot(edge_counts_all, type = "l", xlab = "t", ylab = "Number of unique edges")
 
 ```
 

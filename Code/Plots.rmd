@@ -9,7 +9,15 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+setwd("..")
+source("Code/sweden_returns_washed.R")
+```
+
 ## Loading and cleaning data
+
+
+
 
 ```{r}
 ## Loading data
@@ -26,7 +34,7 @@ colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
 df_2019_2021 <- df %>%
   mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
   filter(X >= as.Date("2019-01-01"),
-         X <= as.Date("2021-12-31"))
+         X <= as.Date("2022-12-31"))
 ## Checking for missing values
 
 na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
@@ -45,6 +53,11 @@ df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
 df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
 df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
 df_clean <- df_clean[, setdiff(names(df_clean), "MTG.A.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "KOGO.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "G2M.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "HAKI.A.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "SBOK.ST")] # removing this stock since it was only zeros
+df_clean <- df_clean[, setdiff(names(df_clean), "KAKEL.ST")] # removing this stock since it was only zeros
 ```
 
 ## png of all asset names
@@ -62,7 +75,7 @@ mat[1:length(assets)] <- assets
 colnames(mat) <- rep("", n_col)
 
 # shrink text with cex; lower = smaller text
-txt_cex <- 0.7   # try 0.5, 0.4, 0.3
+txt_cex <- 0.4   # try 0.5, 0.4, 0.3
 
 tt <- ttheme_minimal(
   core = list(fg_params = list(cex = txt_cex)),
@@ -78,35 +91,10 @@ dev.off()
 
 ```
 
-## Checking QQ plots of samples from data
-
-```{r}
-#set.seed(3)
-
-# date column
-df_clean$X <- as.Date(df_clean$X)   # adjust format if needed
-dates <- df_clean$X
-
-# pick 16 random assets (excluding date column)
-all_assets <- setdiff(colnames(df_clean), "X")
-assets_16  <- sample(all_assets, 20)
-
-# common ylim across all 16
-ylim_common <- range(df_clean[assets_16], na.rm = TRUE)
-
-# split into first and second half
-par(mfrow = c(4, 5), mar = c(3, 3, 2, 1))
-
-for (nm in assets_16) {
-  qqnorm(df_clean[[nm]], main = paste("Q-Q Plot: ", nm))
-  qqline(df_clean[[nm]], col = "red")
-}
-```
-
 ## some plots of the log returns
 
 ```{r}
-set.seed(3)
+set.seed(132)
 
 # date column
 df_clean$X <- as.Date(df_clean$X)   # adjust format if needed
@@ -328,7 +316,7 @@ Z_0 <- scale(Z_0, center = TRUE, scale = FALSE)
 ## Checking normality over time
 
 ```{r}
-asset <- "PADEL.ST"  # change to any column name
+asset <- "MVIR.ST"  # change to any column name
 x <- Z_df[[asset]]
 
 window_size <- 250
@@ -346,11 +334,10 @@ for (i in seq_along(starts)) {
          main = paste0(asset, " | days ", idx[1], "–", idx[length(idx)]))
   qqline(x_win, col = "red")
 }
-
 ```
 
 ```{r}
-asset <- "MTG.A.ST"  # change to any column name
+asset <- "QIIWI.ST"  # change to any column name
 x <- Z_df[[asset]]
 
 window_size <- 250
@@ -368,17 +355,55 @@ for (i in seq_along(starts)) {
          main = paste0(asset, " | days ", idx[1], "–", idx[length(idx)]))
   qqline(x_win, col = "red")
 }
-
-```
-```{r}
-library(quantmod)
-start_date <- "2010-01-01"
-
-x <- getSymbols("MTG-A.ST", src = "yahoo", from = start_date, auto.assign = FALSE)
-plot(x, type = "l")
 ```
 
 ## Regular GLASSO on time intervals
+```{r}
+library(huge)
+
+## --- 1. Define windows (same as in your QQ plot example) ---
+window_size <- 250
+n <- nrow(Z_0)   # number of time points
+
+starts <- seq(1, n - window_size + 1, by = window_size)
+
+## --- 2. Glasso settings ---
+tol <- 1e-6            # for turning precision into adjacency later, if needed
+
+## --- 3. Fit glasso in each window ---
+glasso_list <- vector("list", length(starts))
+names(glasso_list) <- paste0("win_", seq_along(starts))
+
+for (i in seq_along(starts)) {
+  idx   <- starts[i]:(starts[i] + window_size - 1)
+  Z_win <- as.matrix(Z_0[idx, , drop = FALSE])  # 250 × p window
+
+  fit <- huge(
+    Z_win,
+    method       = "glasso",
+    lambda = c(0.5, 0.35, 0.20)
+  )
+
+  glasso_list[[i]] <- fit
+}
+
+## --- 4. Extract precision matrices and adjacencies for each window ---
+icov_list <- lapply(glasso_list, function(fit) fit$icov[[1]])  # first (only) lambda
+
+adj_list <- lapply(icov_list, function(Omega) {
+  A <- (abs(Omega) > tol) * 1
+  diag(A) <- 0
+  A
+})
+```
+## Plots of regular GLASSO for the four different time periods with three different values of lambda
+
+```{r}
+plot(glasso_list[[1]])  
+plot(glasso_list[[2]]) 
+plot(glasso_list[[3]]) 
+plot(glasso_list[[4]])
+```
 
 
 ## Modelling time series through tvglasso
@@ -389,5 +414,714 @@ library(tvsfglasso)
 Y <- t(Z_0) # row = assets, cols = time points
 N = ncol(Y) # number of time points
 pos <- 1:N # length of data as sequence
-res <- tvglasso(Y = Y, N = N, pos = pos, rep = FALSE, lambda = 0.5, h = 0.025) # fitting tvglasso model
+res <- tvglasso(Y = Y, N = N, pos = pos, rep = FALSE, lambda = 0.7, h = 0.025) # fitting tvglasso model
+```
+
+## Adding sectors to dataset
+
+```{r}
+log_returns <- xts(df_clean[ , -1], order.by = as.Date(df_clean$X))
+#log_returns <- log_returns[, colSums(is.na(log_returns)) == 0]
+library(readxl)
+library(dplyr)
+
+# Read sectors
+sectors_df <- read_excel("../Data/Sectors.xlsx")  # Columns: Symbol, Sector
+
+# Tickers from log_returns
+tickers <- colnames(log_returns)
+
+# Normalize
+tickers <- toupper(trimws(tickers))
+sectors_df$Symbol <- toupper(trimws(sectors_df$Symbol))
+
+# Add .ST to match Yahoo tickers
+sectors_df$Yahoo_Ticker <- paste0(sectors_df$Symbol, ".ST")
+
+# Create a named vector for mapping
+sector_map <- setNames(sectors_df$Sector, sectors_df$Yahoo_Ticker)
+
+# Map tickers to sectors
+ticker_sectors_Z0 <- sector_map[tickers]
+
+# Identify tickers without a sector
+missing_tickers <- tickers[is.na(ticker_sectors)]
+if(length(missing_tickers) > 0){
+  cat("These tickers have no matching sector:\n")
+  print(missing_tickers)
+}
+```
+
+## Plot of Time-Varying GLASSO at t = 1
+
+```{r}
+library(igraph)
+
+## --- 1) Precision & partial correlations at t = 1 ---
+Omega1 <- res$icov[[1]]
+
+# partial correlation matrix
+d  <- sqrt(diag(Omega1))
+P1 <- -Omega1 / (d %o% d)
+diag(P1) <- 0
+
+## --- 2) Build graph with weights = partial correlations ---
+g1 <- graph_from_adjacency_matrix(P1, mode = "undirected", weighted = TRUE, diag = FALSE)
+
+# optionally drop very small edges
+#tol <- 0.01   # tweak this threshold
+#g1  <- delete_edges(g1, E(g1)[abs(weight) < tol])
+
+## --- 3) Layout: same filled-circle layout as before ---
+set.seed(1)
+n <- vcount(g1)
+theta <- runif(n, 0, 2*pi)
+r     <- sqrt(runif(n, 0, 1))
+lay_disk <- cbind(r * cos(theta), r * sin(theta))
+
+## --- 4) Color code edges by |partial corr| (3 cutoffs, 3 reds) ---
+abs_w <- abs(E(g1)$weight)
+
+# choose your cutoffs (in terms of |partial corr|)
+cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf )  # 0–0.05, 0.05–0.10, >0.10
+
+# 13 bins total
+n_bins <- length(cuts) - 1      # 13
+n_red  <- n_bins - 1            # 12 red bins (everything above 0.05)
+
+# gray for the first bin, then 12 reds from light to dark
+reds <- colorRampPalette(c("#ffcccc", "#7f0000"))(n_red)
+pal  <- c("grey80", reds)
+
+# map to 3 levels
+lev  <- cut(abs_w, breaks = cuts, include.lowest = TRUE, labels = FALSE)
+
+# palette: light -> medium -> dark red
+#pal <- c("gray", "#ff6666", "#990000")
+
+E(g1)$color <- pal[lev]
+
+# optionally make thicker lines for stronger edges
+E(g1)$width <- 0.5 + lev   # 1, 2, 3
+
+## --- 5) Plot ---
+par(mar = c(0, 0, 0, 0))
+
+plot(
+  g1,
+  layout             = lay_disk,
+  vertex.size        = 3,
+  vertex.label       = NA,
+  vertex.color       = "black",
+  vertex.frame.color = NA,
+  edge.color         = E(g1)$color,
+  edge.width         = E(g1)$width,
+  xlim               = c(-1.1, 1.1),
+  ylim               = c(-1.1, 1.1),
+  asp                = 1,
+  axes               = FALSE
+)
+
+symbols(0, 0, circles = 1.05, inches = FALSE, add = TRUE, lwd = 2, fg = "black")
+```
+## Max partial correlation between A,B assets
+
+```{r}
+## helper: partial correlation from precision
+pcor_from_icov <- function(Omega) {
+  d <- sqrt(diag(Omega))
+  P <- -Omega / (d %o% d)
+  diag(P) <- 0
+  P
+}
+
+Tn <- length(res$icov)
+
+# asset names from Z_0 (assumes same order as rows/cols in res$icov)
+asset_names <- colnames(Z_0)
+if (is.null(asset_names)) stop("Z_0 needs column names for assets.")
+
+# dates aligned with time index (optional; comment out if not needed)
+dates <- as.Date(df_clean$X)   # ensure df_clean$X is Date or convert before
+
+## 1) Identify A/B pairs from asset_names -----------------------------
+
+# adjust regex if your naming differs; here we assume e.g. VOLV.A.ST, VOLV.B.ST
+is_A <- grepl("\\.A(\\.|$)", asset_names)
+is_B <- grepl("\\.B(\\.|$)", asset_names)
+
+roots_A <- sub("\\.A(\\.|$).*", "", asset_names[is_A])
+roots_B <- sub("\\.B(\\.|$).*", "", asset_names[is_B])
+
+common_roots <- intersect(roots_A, roots_B)
+
+# build mapping: root -> A name, B name, and indices
+ab_pairs <- lapply(common_roots, function(root) {
+  nameA <- asset_names[is_A][which(roots_A == root)[1]]
+  nameB <- asset_names[is_B][which(roots_B == root)[1]]
+  i <- match(nameA, asset_names)
+  j <- match(nameB, asset_names)
+  list(root = root, A = nameA, B = nameB, i = i, j = j)
+})
+
+## 2) For each A/B pair, find maximum partial correlation over time ----
+
+results <- lapply(ab_pairs, function(pair) {
+  i <- pair$i
+  j <- pair$j
+
+  best_val <- -Inf
+  best_t   <- NA_integer_
+
+  for (t in seq_len(Tn)) {
+    P_t <- pcor_from_icov(res$icov[[t]])
+    val <- P_t[i, j]
+    if (!is.na(val) && val > best_val) {
+      best_val <- val
+      best_t   <- t
+    }
+  }
+
+  data.frame(
+    root        = pair$root,
+    asset_A     = pair$A,
+    asset_B     = pair$B,
+    max_pcor    = best_val,
+    t_index     = best_t,
+    date_at_max = dates[best_t],
+    stringsAsFactors = FALSE
+  )
+})
+
+ab_max_pcor_df <- do.call(rbind, results)
+
+# sort by highest max partial correlation
+ab_max_pcor_df <- ab_max_pcor_df[order(-ab_max_pcor_df$max_pcor), ]
+
+ab_max_pcor_df
+```
+
+## GIF of Time-Varying GLASSO
+
+```{r}
+library(igraph)
+library(gifski)
+
+## dates aligned with columns of Y / rows of Z_0
+dates <- as.Date(df_clean$X)   # adjust if needed
+
+# which time points to include
+T_idx <- seq_along(res$icov)
+
+cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf)
+n_bins <- length(cuts) - 1
+n_red  <- n_bins - 1
+
+reds <- colorRampPalette(c("#ffcccc", "#7f0000"))(n_red)
+pal  <- c("grey80", reds)
+
+pcor_from_icov <- function(Omega) {
+  d <- sqrt(diag(Omega))
+  P <- -Omega / (d %o% d)
+  diag(P) <- 0
+  P
+}
+
+## reference layout at t = 300
+t_layout <- 300
+Omega_ref <- res$icov[[t_layout]]
+P_ref     <- pcor_from_icov(Omega_ref)
+
+g_ref <- graph_from_adjacency_matrix(P_ref, mode = "undirected",
+                                     weighted = TRUE, diag = FALSE)
+
+set.seed(1)
+n <- vcount(g_ref)
+theta <- runif(n, 0, 2*pi)
+r     <- sqrt(runif(n, 0, 1))
+lay_disk <- cbind(r * cos(theta), r * sin(theta))
+
+save_gif({
+  op <- par(mar = c(0, 0, 0, 0))
+  on.exit(par(op), add = TRUE)
+
+  for (t in T_idx) {
+    Omega_t <- res$icov[[t]]
+    P_t     <- pcor_from_icov(Omega_t)
+
+    g_t <- graph_from_adjacency_matrix(P_t, mode = "undirected",
+                                       weighted = TRUE, diag = FALSE)
+
+    abs_w <- abs(E(g_t)$weight)
+    lev   <- cut(abs_w, breaks = cuts, include.lowest = TRUE, labels = FALSE)
+    lev[is.na(lev)] <- 1
+
+    E(g_t)$color <- pal[lev]
+    E(g_t)$width <- 0.5 + lev * 0.3
+
+    plot(
+      g_t,
+      layout             = lay_disk,
+      vertex.size        = 3,
+      vertex.label       = NA,
+      vertex.color       = "black",
+      vertex.frame.color = NA,
+      edge.color         = E(g_t)$color,
+      edge.width         = E(g_t)$width,
+      xlim               = c(-1.1, 1.1),
+      ylim               = c(-1.1, 1.1),
+      asp                = 1,
+      axes               = FALSE
+    )
+
+    symbols(0, 0, circles = 1.05, inches = FALSE,
+            add = TRUE, lwd = 2, fg = "black")
+
+    # ---- time + year + month label ----
+    lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+    
+    usr <- par("usr")
+    x0  <- usr[1]
+    y0  <- usr[4]
+    
+    # move down by 4% of the plot height
+    x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+    y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+    
+    text(
+    x0 + x_offset, y0 - y_offset,
+    labels = paste0("t = ", t, "   ", lab_date),
+    adj = c(0, 1),   # left-aligned, top of text at (x,y)
+    xpd = NA,
+    cex = 1.4        # increase for larger text (try 1.2–1.6)
+    )
+
+  }
+}, gif_file = "tvglasso_circle_pcor_year.gif",
+   width = 800, height = 800, delay = 0.08)
+
+
+```
+
+## Plot of Time-Varying GLASSO with sectors at t = 300
+
+```{r}
+library(igraph)
+library(RColorBrewer)
+
+## --- 0) Asset & sector mapping from Z_0 ---
+
+asset_names <- colnames(Z_0)          # tickers, same order as rows/cols in Omega
+sectors_all <- ticker_sectors_Z0      # named vector: names = tickers, values = sectors
+
+## --- 1) Precision & partial correlations at t = 1 ---
+Omega1 <- res$icov[[300]]
+
+# partial correlation matrix
+d  <- sqrt(diag(Omega1))
+P1 <- -Omega1 / (d %o% d)
+diag(P1) <- 0
+
+# give names so igraph keeps them
+dimnames(P1) <- list(asset_names, asset_names)
+
+## --- 2) Build graph with weights = partial correlations ---
+g1 <- graph_from_adjacency_matrix(P1, mode = "undirected",
+                                  weighted = TRUE, diag = FALSE)
+
+## --- 2b) Vertex sectors + colors ---
+
+# sectors in vertex order
+sector_levels <- sort(unique(sectors_v))
+n_sec <- length(sector_levels)
+
+# base palette (similar to before)
+if (n_sec <= 8) {
+  sector_cols <- brewer.pal(n_sec, "Set2")
+} else {
+  sector_cols <- rainbow(n_sec)
+}
+names(sector_cols) <- sector_levels
+
+# --- manual tweaks for better separation ---
+
+# Utilities: strong purple
+if ("Utilities" %in% sector_levels) {
+  sector_cols[sector_levels == "Utilities"] <- "#984ea3"  # purple
+}
+
+# Technology / Information Technology: clear blue
+if ("Technology" %in% sector_levels) {
+  sector_cols[sector_levels == "Technology"] <- "#377eb8" # blue
+}
+if ("Information Technology" %in% sector_levels) {
+  sector_cols[sector_levels == "Information Technology"] <- "#377eb8"
+}
+
+# Materials: vivid green
+if ("Materials" %in% sector_levels) {
+  sector_cols[sector_levels == "Materials"] <- "#4daf4a"  # green
+}
+
+# Real Estate: strong orange/red
+if ("Real Estate" %in% sector_levels) {
+  sector_cols[sector_levels == "Real Estate"] <- "#e41a1c" # red/orange
+}
+
+
+V(g1)$color <- sector_cols[sectors_v]
+
+## --- 3) Layout: group by sector in wedges of a filled circle ---
+
+set.seed(1)
+n <- vcount(g1)
+
+lay_disk <- matrix(NA_real_, nrow = n, ncol = 2)
+rownames(lay_disk) <- V(g1)$name
+
+# each sector gets an angular wedge
+angle_min <- 0
+angle_max <- 2 * pi
+sector_width <- (angle_max - angle_min) / n_sec
+
+for (s_idx in seq_along(sector_levels)) {
+  sec <- sector_levels[s_idx]
+  vidx <- which(sectors_v == sec)  # vertices in this sector
+
+  # wedge for this sector
+  start_angle <- angle_min + (s_idx - 1) * sector_width
+  end_angle   <- start_angle + sector_width
+
+  # random angles within wedge
+  theta <- runif(length(vidx), start_angle, end_angle)
+  # random radii for filled disk
+  r     <- sqrt(runif(length(vidx), 0, 1))
+
+  lay_disk[vidx, ] <- cbind(r * cos(theta), r * sin(theta))
+}
+
+## --- 4) Edge colors by |partial corr| bins ---
+
+abs_w <- abs(E(g1)$weight)
+
+cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf)
+
+n_bins <- length(cuts) - 1
+n_red  <- n_bins - 1
+
+reds <- colorRampPalette(c("#ffcccc", "#7f0000"))(n_red)
+pal  <- c("grey80", reds)
+
+lev <- cut(abs_w, breaks = cuts, include.lowest = TRUE, labels = FALSE)
+lev[is.na(lev)] <- 1
+
+E(g1)$color <- pal[lev]
+E(g1)$width <- 0.5 + lev
+
+## --- 5) Plot ---
+par(mar = c(0, 0, 0, 0))
+
+plot(
+  g1,
+  layout             = lay_disk,
+  vertex.size        = 3,
+  vertex.label       = NA,
+  vertex.color       = V(g1)$color,   # sector colors
+  vertex.frame.color = NA,
+  edge.color         = E(g1)$color,
+  edge.width         = E(g1)$width,
+  xlim               = c(-1.1, 1.1),
+  ylim               = c(-1.1, 1.1),
+  asp                = 1,
+  axes               = FALSE
+)
+
+symbols(0, 0, circles = 1.15, inches = FALSE,
+        add = TRUE, lwd = 2, fg = "black")
+
+legend("bottomleft",
+       legend = sector_levels,
+       col    = sector_cols,
+       pch    = 16,
+       bty    = "n",
+       cex    = 0.6)
+
+```
+
+## GIF of Time-Varying GLASSO with sectors
+
+```{r}
+library(igraph)
+library(RColorBrewer)
+library(gifski)
+
+## --- 0) Assets, sectors, dates ---
+
+asset_names <- colnames(Z_0)          # tickers, same order as rows/cols in res$icov
+sectors_all <- ticker_sectors_Z0      # named vector: names = tickers, values = sectors
+
+# sectors in asset order
+sectors_v <- sectors_all[asset_names]
+
+# safety check
+if (any(is.na(sectors_v))) {
+  cat("Assets with missing sector mapping:\n")
+  print(asset_names[is.na(sectors_v)])
+  stop("Fix sector mapping before plotting.")
+}
+
+sector_levels <- sort(unique(sectors_v))
+n_sec <- length(sector_levels)
+
+# base palette (similar to before)
+if (n_sec <= 8) {
+  sector_cols <- brewer.pal(n_sec, "Set2")
+} else {
+  sector_cols <- rainbow(n_sec)
+}
+names(sector_cols) <- sector_levels
+
+# --- manual tweaks for better separation ---
+
+# Utilities: strong purple
+if ("Utilities" %in% sector_levels) {
+  sector_cols[sector_levels == "Utilities"] <- "#984ea3"  # purple
+}
+
+# Technology / Information Technology: clear blue
+if ("Technology" %in% sector_levels) {
+  sector_cols[sector_levels == "Technology"] <- "#377eb8" # blue
+}
+if ("Information Technology" %in% sector_levels) {
+  sector_cols[sector_levels == "Information Technology"] <- "#377eb8"
+}
+
+# Materials: vivid green
+if ("Materials" %in% sector_levels) {
+  sector_cols[sector_levels == "Materials"] <- "#4daf4a"  # green
+}
+
+# Real Estate: strong orange/red
+if ("Real Estate" %in% sector_levels) {
+  sector_cols[sector_levels == "Real Estate"] <- "#e41a1c" # red/orange
+}
+
+
+# dates aligned with time index
+dates <- as.Date(df_clean$X)
+
+## --- 1) Sector-grouped filled-circle layout (fixed for all t) ---
+
+set.seed(1)
+p <- length(asset_names)
+
+lay_disk <- matrix(NA_real_, nrow = p, ncol = 2)
+rownames(lay_disk) <- asset_names
+
+angle_min <- 0
+angle_max <- 2 * pi
+sector_width <- (angle_max - angle_min) / n_sec
+
+for (s_idx in seq_along(sector_levels)) {
+  sec  <- sector_levels[s_idx]
+  vidx <- which(sectors_v == sec)    # asset indices in this sector
+
+  start_angle <- angle_min + (s_idx - 1) * sector_width
+  end_angle   <- start_angle + sector_width
+
+  theta <- runif(length(vidx), start_angle, end_angle)
+  r     <- sqrt(runif(length(vidx), 0, 1))
+
+  lay_disk[vidx, ] <- cbind(r * cos(theta), r * sin(theta))
+}
+
+if (any(is.na(lay_disk))) stop("Layout contains NA coordinates; check sector mapping.")
+
+## --- 2) Helper: partial correlation from precision ---
+
+pcor_from_icov <- function(Omega) {
+  d <- sqrt(diag(Omega))
+  P <- -Omega / (d %o% d)
+  diag(P) <- 0
+  P
+}
+
+## --- 3) Edge color bins for |partial corr| ---
+
+cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf)
+n_bins <- length(cuts) - 1
+n_red  <- n_bins - 1
+
+reds <- colorRampPalette(c("#ffcccc", "#7f0000"))(n_red)
+pal  <- c("grey80", reds)   # first bin = grey, rest reds
+
+## --- 4) Time indices to include in GIF ---
+
+Ts <- seq_along(res$icov)   # all time points
+# e.g. use every 5th: Ts <- seq(1, length(res$icov), by = 5)
+
+## --- 5) Build GIF ---
+
+save_gif({
+  op <- par(mar = c(0, 0, 0, 0))
+  on.exit(par(op), add = TRUE)
+
+  for (t in Ts) {
+    Omega_t <- res$icov[[t]]
+    P_t     <- pcor_from_icov(Omega_t)
+
+    # Graph at time t (vertex order matches asset_names)
+    g_t <- graph_from_adjacency_matrix(
+      P_t,
+      mode     = "undirected",
+      weighted = TRUE,
+      diag     = FALSE
+    )
+
+    # Edge colors by |partial corr| bins
+    abs_w <- abs(E(g_t)$weight)
+    lev   <- cut(abs_w, breaks = cuts, include.lowest = TRUE, labels = FALSE)
+    lev[is.na(lev)] <- 1
+
+    E(g_t)$color <- pal[lev]
+    E(g_t)$width <- 0.5 + lev      # thicker for stronger edges
+
+    # Node colors by sector (in asset order)
+    vcols <- sector_cols[sectors_v]
+
+    plot(
+      g_t,
+      layout             = lay_disk,
+      vertex.size        = 3,
+      vertex.label       = NA,
+      vertex.color       = vcols,
+      vertex.frame.color = NA,
+      edge.color         = E(g_t)$color,
+      edge.width         = E(g_t)$width,
+      xlim               = c(-1.15, 1.15),
+      ylim               = c(-1.15, 1.15),
+      asp                = 1,
+      axes               = FALSE
+    )
+
+    # circle border
+    symbols(0, 0, circles = 1.15, inches = FALSE,
+            add = TRUE, lwd = 2, fg = "black")
+
+    # sector legend
+    legend("bottomleft",
+           legend = sector_levels,
+           col    = sector_cols,
+           pch    = 16,
+           bty    = "n",
+           cex    = 0.6)
+
+    # ---- t + month/year label ----
+    lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+    usr <- par("usr")
+    x0  <- usr[1]
+    y0  <- usr[4]
+
+    x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+    y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+
+    text(
+      x0 + x_offset,
+      y0 - y_offset,
+      labels = paste0("t = ", t, "   ", lab_date),
+      adj = c(0, 1),   # left, top
+      xpd = NA,
+      cex = 1.4
+    )
+  }
+}, gif_file = "tvglasso_sector_circle.gif",
+   width = 800, height = 800, delay = 0.08)
+
+```
+
+```{r}
+library(gifski)
+
+pcor_from_icov <- function(M) {
+  d <- sqrt(diag(M))
+  P <- -M / (d %o% d)
+  diag(P) <- 0
+  P
+}
+
+# dates aligned with res$icov time index
+dates <- as.Date(df_clean$X)  # adjust if needed
+
+cap  <- 0.05  # try 0.05, 0.08, 0.10, 0.15
+zlim <- c(-cap, cap)
+
+cols   <- colorRampPalette(c("darkblue","white","red"))(256)
+breaks <- seq(zlim[1], zlim[2], length.out = length(cols) + 1)
+
+Ts <- seq(1, length(res$icov), by = 1)
+
+save_gif({
+  par(mar = c(0,0,2,0))
+  for (t in Ts) {
+    P <- pcor_from_icov(res$icov[[t]])
+    P <- pmax(pmin(P, zlim[2]), zlim[1])   # clamp
+
+    image(
+      t(P[nrow(P):1, ]),
+      col    = cols,
+      breaks = breaks,
+      axes   = FALSE,
+      useRaster = TRUE
+    )
+
+    # ---- t + month/year label ----
+    lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+    usr <- par("usr")
+    x0  <- usr[1]
+    y0  <- usr[4]
+
+    # small offsets as % of width/height
+    x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+    y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+
+    text(
+      x0 + x_offset,
+      y0 - y_offset,
+      labels = paste0("t = ", t, "   ", lab_date),
+      adj = c(0, 1),   # left, top
+      xpd = NA,
+      cex = 1.4
+    )
+
+    # optional title above
+    title(main = paste0("Partial correlation (capped at ±", cap, ")"), line = 1)
+  }
+}, gif_file = "pcor_heatmap_capped.gif", width = 800, height = 800, delay = 0.03)
+
+```
+
+
+## Average volatility as rolling window (window size = 20)
+
+```{r}
+k <- 20
+vol_mat <- apply(Z_0, 2, function(x) zoo::rollapply(x, width = k, sd, align = "right", fill = NA))
+
+vol_mean <- rowMeans(vol_mat, na.rm = TRUE)      # average vol across assets
+
+plot(dates, vol_mean, type = "l", xlab = "time", ylab = "rolling sd",
+     main = paste("Average rolling volatility (k=", k, ")", sep=""))
+
+legend("topright", legend = "mean", lty = c(1,2), bty = "n")
+```
+## Unique number of edges over time
+
+```{r}
+edge_counts_all <- sapply(seq_along(res$icov), function(k) {
+  M <- res$icov[[k]]
+  sum(abs(M)[upper.tri(M)] > 1e-6)
+})
+
+plot(dates, edge_counts_all, type = "l", xlab = "t", ylab = "Number of unique edges", main = "Unique number of edges over time")
+
 ```
