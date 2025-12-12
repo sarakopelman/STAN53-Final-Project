@@ -9,55 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Loading cleaned data
+
 ```{r}
 setwd("..")
 source("Code/sweden_returns_washed.R")
-```
-
-## Loading and cleaning data
-
-
-
-
-```{r}
-## Loading data
-
-library(dplyr)
-
-df <- read.csv(file.path("..", "Data", "sweden_returns_merged.csv"))
-
-#df <- read.csv("Data/sweden_returns_merged.csv")
-
-colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
-## Choosing time period: 2019 - 2021
-
-df_2019_2021 <- df %>%
-  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
-  filter(X >= as.Date("2019-01-01"),
-         X <= as.Date("2022-12-31"))
-## Checking for missing values
-
-na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
-na_counts[na_counts > 0]
-
-## Removing all assets that have number of NA > 1 for time period
-
-na_counts <- colSums(is.na(df_2019_2021))
-keep_cols <- names(na_counts)[na_counts <= 1]
-keep_cols <- union("X", setdiff(keep_cols, "X"))  # ensure X stays first/kept
-df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
-
-## Interpolating/Extrapolating the two missing values for the two assets with only one value missing
-
-df_clean$INCOAX.ST[1] <- 0 # assign 0 as if stock did not move
-df_clean$RO.ST[219] <- 0 # assign 0 as if stock did not move
-df_clean <- df_clean[, setdiff(names(df_clean), "BOTX.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "MTG.A.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "KOGO.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "G2M.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "HAKI.A.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "SBOK.ST")] # removing this stock since it was only zeros
-df_clean <- df_clean[, setdiff(names(df_clean), "KAKEL.ST")] # removing this stock since it was only zeros
 ```
 
 ## png of all asset names
@@ -85,7 +41,7 @@ tt <- ttheme_minimal(
 tbl <- tableGrob(mat, rows = NULL, theme = tt)
 
 # make a bigger image so the tiny text is still readable when you insert it
-png("asset_names.png", width = 2400, height = 1400, res = 200)
+png("asset_names.png", width = 2400, height = 1400, <- = 200)
 grid.draw(tbl)
 dev.off()
 
@@ -184,6 +140,7 @@ for (nm in second_half) {
 ## Standardizing through Stochastic Volatility (Bayesian MCMC method for posterior distribution)
 
 ```{r}
+set.seed(132)
 library(stochvol)
 library(xts)
 
@@ -445,7 +402,7 @@ sector_map <- setNames(sectors_df$Sector, sectors_df$Yahoo_Ticker)
 ticker_sectors_Z0 <- sector_map[tickers]
 
 # Identify tickers without a sector
-missing_tickers <- tickers[is.na(ticker_sectors)]
+missing_tickers <- tickers[is.na(ticker_sectors_Z0)]
 if(length(missing_tickers) > 0){
   cat("These tickers have no matching sector:\n")
   print(missing_tickers)
@@ -524,6 +481,7 @@ plot(
 
 symbols(0, 0, circles = 1.05, inches = FALSE, add = TRUE, lwd = 2, fg = "black")
 ```
+
 ## Max partial correlation between A,B assets
 
 ```{r}
@@ -851,6 +809,25 @@ legend("bottomleft",
 ## GIF of Time-Varying GLASSO with sectors
 
 ```{r}
+sector_color_map <- c(
+  "Financials"            = "#33a02c",   # green
+  "Industrials"           = "#ff7f00",   # orange
+  "Consumer Discretionary"= "yellow",   # green
+  "Consumer Staples"      = "#b15928",   # brown
+  "Technology"            = "#377eb8",   # strong blue
+  "Utilities"             = "#984ea3",   # purple
+  "Healthcare"            = "#e31a1c",   # red
+  "Real Estate"           = "cyan",   # soft red
+  "Materials"             = "darkgreen",   # vivid green
+  "Energy"                = "pink",   # light blue
+  "Communication Services"= "magenta"    # pink
+)
+#colnames(Z_0)[colnames(Z_0) == "X2CUREX.ST"] <- "2CUREX.ST"
+
+```
+
+
+```{r}
 library(igraph)
 library(RColorBrewer)
 library(gifski)
@@ -873,39 +850,16 @@ if (any(is.na(sectors_v))) {
 sector_levels <- sort(unique(sectors_v))
 n_sec <- length(sector_levels)
 
-# base palette (similar to before)
-if (n_sec <= 8) {
-  sector_cols <- brewer.pal(n_sec, "Set2")
-} else {
-  sector_cols <- rainbow(n_sec)
-}
-names(sector_cols) <- sector_levels
+# ---- HARD-CODED SECTOR COLORS ----
 
-# --- manual tweaks for better separation ---
-
-# Utilities: strong purple
-if ("Utilities" %in% sector_levels) {
-  sector_cols[sector_levels == "Utilities"] <- "#984ea3"  # purple
+# ensure all sectors in your data exist in map
+unknown_sectors <- setdiff(sector_levels, names(sector_color_map))
+if (length(unknown_sectors) > 0) {
+  stop("Missing colors for sectors: ", paste(unknown_sectors, collapse = ", "))
 }
 
-# Technology / Information Technology: clear blue
-if ("Technology" %in% sector_levels) {
-  sector_cols[sector_levels == "Technology"] <- "#377eb8" # blue
-}
-if ("Information Technology" %in% sector_levels) {
-  sector_cols[sector_levels == "Information Technology"] <- "#377eb8"
-}
-
-# Materials: vivid green
-if ("Materials" %in% sector_levels) {
-  sector_cols[sector_levels == "Materials"] <- "#4daf4a"  # green
-}
-
-# Real Estate: strong orange/red
-if ("Real Estate" %in% sector_levels) {
-  sector_cols[sector_levels == "Real Estate"] <- "#e41a1c" # red/orange
-}
-
+# final color vector aligned with sector_levels
+sector_cols <- sector_color_map[sector_levels]
 
 # dates aligned with time index
 dates <- as.Date(df_clean$X)
@@ -1040,6 +994,49 @@ save_gif({
 ```
 
 ```{r}
+cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf)
+n_bins <- length(cuts) - 1
+n_red  <- n_bins - 1
+
+reds <- colorRampPalette(c("#ffcccc", "#7f0000"))(n_red)
+pal  <- c("grey80", reds)
+
+max_finite <- cuts[length(cuts) - 1]
+
+# fine grid along y
+y <- seq(0, max_finite, length.out = 500)
+bin_idx <- findInterval(y, cuts, rightmost.closed = TRUE)
+bin_idx[bin_idx == 0] <- 1
+cols_bar <- pal[bin_idx]
+
+par(mar = c(4, 5, 2, 2))
+
+# note: xlim is narrow now
+plot(NA, xlim = c(0, 0.2), ylim = c(0, max_finite),
+     xlab = "", ylab = "|partial correlation|",
+     xaxt = "n", yaxt = "n")
+
+dy <- diff(y)[1]
+x_left  <- 0.012
+x_right <- 0.001   # thin bar between 0.05 and 0.15 on x
+
+for (i in seq_along(y)) {
+  rect(x_left, y[i] - dy/2, x_right, y[i] + dy/2,
+       col = cols_bar[i], border = NA)
+}
+
+finite_cuts <- cuts[1:(length(cuts) - 1)]
+abline(h = finite_cuts, col = "white", lwd = 1)
+
+axis(2,
+     at = finite_cuts,
+     labels = formatC(finite_cuts, digits = 2, format = "f"),
+     las = 1)
+
+```
+
+
+```{r}
 library(gifski)
 
 pcor_from_icov <- function(M) {
@@ -1114,6 +1111,75 @@ plot(dates, vol_mean, type = "l", xlab = "time", ylab = "rolling sd",
 
 legend("topright", legend = "mean", lty = c(1,2), bty = "n")
 ```
+
+## GIF of average volatility
+
+```{r}
+library(zoo)
+library(gifski)
+
+# 1) Rolling volatility
+k <- 20
+dates <- as.Date(df_clean$X)
+
+vol_mat <- apply(Z_0, 2, function(x)
+  rollapply(x, width = k, sd, align = "right", fill = NA)
+)
+
+vol_mean <- rowMeans(vol_mat, na.rm = TRUE)
+
+# common y-limits so the plot doesn't jump
+ylim_common <- range(vol_mean, na.rm = TRUE)
+
+# 2) Build GIF: same number of frames as time points
+Ts <- seq_along(vol_mean)   # one frame per time index
+
+save_gif({
+  par(mar = c(4, 4, 3, 1))
+
+  for (t in Ts) {
+    # base plot: full volatility line
+    plot(dates, vol_mean,
+         type = "l",
+         xlab = "time",
+         ylab = "rolling sd",
+         main = paste("Average rolling volatility (k=", k, ")", sep = ""),
+         ylim = ylim_common)
+
+    axis.Date(1,
+              at = seq(min(dates), max(dates), by = "year"),
+              format = "%Y")
+
+    legend("topright", legend = "mean", lty = 1, bty = "n")
+    # ---- t + month/year label ----
+    lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+    usr <- par("usr")
+    x0  <- usr[1]
+    y0  <- usr[4]
+
+    # small offsets as % of width/height
+    x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+    y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+
+    text(
+      x0 + x_offset,
+      y0 - y_offset,
+      labels = paste0("t = ", t, "   ", lab_date),
+      adj = c(0, 1),   # left, top
+      xpd = NA,
+      cex = 1.4
+    )
+    # moving red dot (skip if NA at start due to rolling window)
+    if (!is.na(vol_mean[t])) {
+      points(dates[t], vol_mean[t], col = "red", pch = 19, cex = 1.4)
+    }
+  }
+}, gif_file = "rolling_vol_with_dot.gif",
+   width = 900, height = 600, delay = 0.08)
+
+```
+
+
 ## Unique number of edges over time
 
 ```{r}
