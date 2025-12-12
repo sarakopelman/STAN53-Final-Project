@@ -16,37 +16,6 @@ setwd("..")
 source("Code/sweden_returns_washed.R")
 ```
 
-## png of all asset names
-
-```{r}
-library(gridExtra)
-library(grid)
-
-assets <- sort(colnames(df_clean))   # or rownames(df_clean)
-n_col  <- 20
-n_row  <- ceiling(length(assets) / n_col)
-
-mat <- matrix("", nrow = n_row, ncol = n_col)
-mat[1:length(assets)] <- assets
-colnames(mat) <- rep("", n_col)
-
-# shrink text with cex; lower = smaller text
-txt_cex <- 0.4   # try 0.5, 0.4, 0.3
-
-tt <- ttheme_minimal(
-  core = list(fg_params = list(cex = txt_cex)),
-  colhead = list(fg_params = list(cex = txt_cex))
-)
-
-tbl <- tableGrob(mat, rows = NULL, theme = tt)
-
-# make a bigger image so the tiny text is still readable when you insert it
-png("asset_names.png", width = 2400, height = 1400, <- = 200)
-grid.draw(tbl)
-dev.off()
-
-```
-
 ## some plots of the log returns
 
 ```{r}
@@ -315,6 +284,7 @@ for (i in seq_along(starts)) {
 ```
 
 ## Regular GLASSO on time intervals
+
 ```{r}
 library(huge)
 
@@ -353,6 +323,7 @@ adj_list <- lapply(icov_list, function(Omega) {
   A
 })
 ```
+
 ## Plots of regular GLASSO for the four different time periods with three different values of lambda
 
 ```{r}
@@ -378,7 +349,6 @@ res <- tvglasso(Y = Y, N = N, pos = pos, rep = FALSE, lambda = 0.7, h = 0.025) #
 
 ```{r}
 log_returns <- xts(df_clean[ , -1], order.by = as.Date(df_clean$X))
-#log_returns <- log_returns[, colSums(is.na(log_returns)) == 0]
 library(readxl)
 library(dplyr)
 
@@ -480,83 +450,6 @@ plot(
 )
 
 symbols(0, 0, circles = 1.05, inches = FALSE, add = TRUE, lwd = 2, fg = "black")
-```
-
-## Max partial correlation between A,B assets
-
-```{r}
-## helper: partial correlation from precision
-pcor_from_icov <- function(Omega) {
-  d <- sqrt(diag(Omega))
-  P <- -Omega / (d %o% d)
-  diag(P) <- 0
-  P
-}
-
-Tn <- length(res$icov)
-
-# asset names from Z_0 (assumes same order as rows/cols in res$icov)
-asset_names <- colnames(Z_0)
-if (is.null(asset_names)) stop("Z_0 needs column names for assets.")
-
-# dates aligned with time index (optional; comment out if not needed)
-dates <- as.Date(df_clean$X)   # ensure df_clean$X is Date or convert before
-
-## 1) Identify A/B pairs from asset_names -----------------------------
-
-# adjust regex if your naming differs; here we assume e.g. VOLV.A.ST, VOLV.B.ST
-is_A <- grepl("\\.A(\\.|$)", asset_names)
-is_B <- grepl("\\.B(\\.|$)", asset_names)
-
-roots_A <- sub("\\.A(\\.|$).*", "", asset_names[is_A])
-roots_B <- sub("\\.B(\\.|$).*", "", asset_names[is_B])
-
-common_roots <- intersect(roots_A, roots_B)
-
-# build mapping: root -> A name, B name, and indices
-ab_pairs <- lapply(common_roots, function(root) {
-  nameA <- asset_names[is_A][which(roots_A == root)[1]]
-  nameB <- asset_names[is_B][which(roots_B == root)[1]]
-  i <- match(nameA, asset_names)
-  j <- match(nameB, asset_names)
-  list(root = root, A = nameA, B = nameB, i = i, j = j)
-})
-
-## 2) For each A/B pair, find maximum partial correlation over time ----
-
-results <- lapply(ab_pairs, function(pair) {
-  i <- pair$i
-  j <- pair$j
-
-  best_val <- -Inf
-  best_t   <- NA_integer_
-
-  for (t in seq_len(Tn)) {
-    P_t <- pcor_from_icov(res$icov[[t]])
-    val <- P_t[i, j]
-    if (!is.na(val) && val > best_val) {
-      best_val <- val
-      best_t   <- t
-    }
-  }
-
-  data.frame(
-    root        = pair$root,
-    asset_A     = pair$A,
-    asset_B     = pair$B,
-    max_pcor    = best_val,
-    t_index     = best_t,
-    date_at_max = dates[best_t],
-    stringsAsFactors = FALSE
-  )
-})
-
-ab_max_pcor_df <- do.call(rbind, results)
-
-# sort by highest max partial correlation
-ab_max_pcor_df <- ab_max_pcor_df[order(-ab_max_pcor_df$max_pcor), ]
-
-ab_max_pcor_df
 ```
 
 ## GIF of Time-Varying GLASSO
