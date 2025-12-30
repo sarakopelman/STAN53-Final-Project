@@ -81,14 +81,44 @@ for (nm in second_half) {
 }
 ```
 
-## QQ-plots and QQ-line for the log returns
+## Descriptive statistics for the log returns
 
 ```{r}
+library(dplyr)
+library(purrr)
+library(knitr)
 
-qqnorm(df_2019_2022$KOGO.ST, main = "Q-Q Plot: KOGO.ST")
-qqline(df_2019_2022$KOGO.ST, col = "red")
+tickers <- c(first_half, second_half)
+
+stats_tbl <- map_dfr(tickers, function(nm) {
+  x <- df_clean[[nm]]
+  x <- x[is.finite(x)]  # drops NA/NaN/Inf
+
+  tibble(
+    Stock  = nm,
+    Mean   = mean(x),
+    SD     = sd(x),
+    Median = median(x),
+    Min    = min(x),
+    Q1     = unname(quantile(x, 0.25)),
+    Q3     = unname(quantile(x, 0.75)),
+    Max    = max(x)
+  )
+}) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 6)))  # adjust digits if you want
+
+tab_tex <- kable(
+  stats_tbl,
+  format   = "latex",
+  booktabs = TRUE
+)
+
+writeLines(tab_tex, "desc_table1.tex")
+
 ```
 
+
+## QQ-plots and QQ-line for the log returns
 
 ## First half
 
@@ -110,7 +140,6 @@ for (nm in second_half) {
   qqnorm(df_clean[[nm]], main = paste("Q-Q Plot: ", nm))
   qqline(df_clean[[nm]], col = "red")
 }
-
 ```
 
 ## Standardizing through Stochastic Volatility (Bayesian MCMC method for posterior distribution)
