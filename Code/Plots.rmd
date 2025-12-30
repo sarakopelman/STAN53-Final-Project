@@ -83,6 +83,13 @@ for (nm in second_half) {
 
 ## QQ-plots and QQ-line for the log returns
 
+```{r}
+
+qqnorm(df_2019_2022$KOGO.ST, main = "Q-Q Plot: KOGO.ST")
+qqline(df_2019_2022$KOGO.ST, col = "red")
+```
+
+
 ## First half
 
 ```{r}
