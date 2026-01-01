@@ -271,6 +271,7 @@ for (nm in second_half) {
 ## Ensuring zero mean
 
 ```{r}
+names(Z_xts)[names(Z_xts) == "X2CUREX.ST"] <- "2CUREX.ST"
 Z_0 <- coredata(Z_xts)
 Z_0 <- scale(Z_0, center = TRUE, scale = FALSE)
 ```
@@ -369,7 +370,6 @@ plot(glasso_list[[3]])
 plot(glasso_list[[4]])
 ```
 
-
 ## Modelling time series through tvglasso
 
 ```{r}
@@ -419,9 +419,9 @@ if(length(missing_tickers) > 0){
 
 ```{r}
 library(igraph)
-
+t <- 900
 ## --- 1) Precision & partial correlations at t = 1 ---
-Omega1 <- res$icov[[1]]
+Omega1 <- res$icov[[t]]
 
 # partial correlation matrix
 d  <- sqrt(diag(Omega1))
@@ -486,6 +486,24 @@ plot(
 )
 
 symbols(0, 0, circles = 1.05, inches = FALSE, add = TRUE, lwd = 2, fg = "black")
+# ---- time + year + month label ----
+    lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+    
+    usr <- par("usr")
+    x0  <- usr[1]
+    y0  <- usr[4]
+    
+    # move down by 4% of the plot height
+    x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+    y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+    
+    text(
+    x0 + x_offset, y0 - y_offset,
+    labels = paste0("t = ", t, "   ", lab_date),
+    adj = c(0, 1),   # left-aligned, top of text at (x,y)
+    xpd = NA,
+    cex = 1.4        # increase for larger text (try 1.2–1.6)
+    )
 ```
 
 ## GIF of Time-Varying GLASSO
@@ -590,19 +608,43 @@ save_gif({
 
 ```
 
-## Plot of Time-Varying GLASSO with sectors at t = 300
-
 ```{r}
-library(igraph)
-library(RColorBrewer)
+sector_color_map <- c(
+  "Financials"            = "#33a02c",   # green
+  "Industrials"           = "#ff7f00",   # orange
+  "Consumer Discretionary"= "yellow",   # green
+  "Consumer Staples"      = "#b15928",   # brown
+  "Technology"            = "#377eb8",   # strong blue
+  "Utilities"             = "#984ea3",   # purple
+  "Healthcare"            = "#e31a1c",   # red
+  "Real Estate"           = "cyan",   # soft red
+  "Materials"             = "darkgreen",   # vivid green
+  "Energy"                = "pink",   # light blue
+  "Communication Services"= "magenta"    # pink
+)
+#colnames(Z_0)[colnames(Z_0) == "X2CUREX.ST"] <- "2CUREX.ST"
+## --- 0) Assets, sectors, dates ---
 
-## --- 0) Asset & sector mapping from Z_0 ---
-
-asset_names <- colnames(Z_0)          # tickers, same order as rows/cols in Omega
+asset_names <- colnames(Z_0)          # tickers, same order as rows/cols in res$icov
 sectors_all <- ticker_sectors_Z0      # named vector: names = tickers, values = sectors
 
+# sectors in asset order
+sectors_v <- sectors_all[asset_names]
+
+# safety check
+if (any(is.na(sectors_v))) {
+  cat("Assets with missing sector mapping:\n")
+  print(asset_names[is.na(sectors_v)])
+  stop("Fix sector mapping before plotting.")
+}
+```
+
+## Plot of Time-Varying GLASSO with sectors at t 
+
+```{r}
+t <- 900
 ## --- 1) Precision & partial correlations at t = 1 ---
-Omega1 <- res$icov[[300]]
+Omega1 <- res$icov[[t]]
 
 # partial correlation matrix
 d  <- sqrt(diag(Omega1))
@@ -622,39 +664,16 @@ g1 <- graph_from_adjacency_matrix(P1, mode = "undirected",
 sector_levels <- sort(unique(sectors_v))
 n_sec <- length(sector_levels)
 
-# base palette (similar to before)
-if (n_sec <= 8) {
-  sector_cols <- brewer.pal(n_sec, "Set2")
-} else {
-  sector_cols <- rainbow(n_sec)
-}
-names(sector_cols) <- sector_levels
+# use predefined colors
+sector_cols <- sector_color_map[sector_levels]
 
-# --- manual tweaks for better separation ---
-
-# Utilities: strong purple
-if ("Utilities" %in% sector_levels) {
-  sector_cols[sector_levels == "Utilities"] <- "#984ea3"  # purple
+# fallback for any sectors missing from the map
+if (any(is.na(sector_cols))) {
+  missing_secs <- sector_levels[is.na(sector_cols)]
+  fallback_cols <- rainbow(length(missing_secs))
+  names(fallback_cols) <- missing_secs
+  sector_cols[is.na(sector_cols)] <- fallback_cols
 }
-
-# Technology / Information Technology: clear blue
-if ("Technology" %in% sector_levels) {
-  sector_cols[sector_levels == "Technology"] <- "#377eb8" # blue
-}
-if ("Information Technology" %in% sector_levels) {
-  sector_cols[sector_levels == "Information Technology"] <- "#377eb8"
-}
-
-# Materials: vivid green
-if ("Materials" %in% sector_levels) {
-  sector_cols[sector_levels == "Materials"] <- "#4daf4a"  # green
-}
-
-# Real Estate: strong orange/red
-if ("Real Estate" %in% sector_levels) {
-  sector_cols[sector_levels == "Real Estate"] <- "#e41a1c" # red/orange
-}
-
 
 V(g1)$color <- sector_cols[sectors_v]
 
@@ -728,33 +747,31 @@ symbols(0, 0, circles = 1.15, inches = FALSE,
 
 legend("bottomleft",
        legend = sector_levels,
-       col    = sector_cols,
+       col    = sector_cols[sector_levels],
        pch    = 16,
        bty    = "n",
        cex    = 0.6)
 
+# ---- time + year + month label ----
+lab_date <- format(dates[t], "%b %Y")  # e.g. "Mar 2020"
+
+usr <- par("usr")
+x0  <- usr[1]
+y0  <- usr[4]
+
+x_offset <- 0.04 * (usr[2] - usr[1])   # move right
+y_offset <- 0.04 * (usr[4] - usr[3])   # move down
+
+text(
+  x0 + x_offset, y0 - y_offset,
+  labels = paste0("t = ", t, "   ", lab_date),
+  adj = c(0, 1),
+  xpd = NA,
+  cex = 1.4
+)
 ```
 
 ## GIF of Time-Varying GLASSO with sectors
-
-```{r}
-sector_color_map <- c(
-  "Financials"            = "#33a02c",   # green
-  "Industrials"           = "#ff7f00",   # orange
-  "Consumer Discretionary"= "yellow",   # green
-  "Consumer Staples"      = "#b15928",   # brown
-  "Technology"            = "#377eb8",   # strong blue
-  "Utilities"             = "#984ea3",   # purple
-  "Healthcare"            = "#e31a1c",   # red
-  "Real Estate"           = "cyan",   # soft red
-  "Materials"             = "darkgreen",   # vivid green
-  "Energy"                = "pink",   # light blue
-  "Communication Services"= "magenta"    # pink
-)
-#colnames(Z_0)[colnames(Z_0) == "X2CUREX.ST"] <- "2CUREX.ST"
-
-```
-
 
 ```{r}
 library(igraph)
@@ -921,6 +938,8 @@ save_gif({
    width = 800, height = 800, delay = 0.08)
 
 ```
+
+## Bar for strength of correlation
 
 ```{r}
 cuts <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.45, Inf)
