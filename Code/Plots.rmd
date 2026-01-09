@@ -740,7 +740,6 @@ if ("X2CUREX.ST" %in% colnames(Z_0)) {
 }
 
 ## --- 0) Assets, sectors, dates ---
-Z_0 <- 
 asset_names <- colnames(Z_0)          # tickers, same order as rows/cols in res$icov
 sectors_all <- ticker_sectors_Z0      # named vector: names = tickers, values = sectors
 
