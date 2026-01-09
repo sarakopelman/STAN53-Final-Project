@@ -5,10 +5,10 @@ library(dplyr)
 df <- read.csv("Data/sweden_returns_merged.csv")
 
 colnames(df)[colnames(df) == "X2CUREX.ST"] <- "2CUREX.ST"
-## Choosing time period: 2019 - 2021
+## Choosing time period: 2019 - 2022
 
 df_2019_2022 <- df %>%
-  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below
+  mutate(X = as.Date(X)) %>%   # if this gives NA, see note below 
   filter(X >= as.Date("2019-01-01"),
          X <= as.Date("2022-12-31"))
 
