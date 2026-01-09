@@ -15,15 +15,15 @@ df_2019_2022 <- df %>%
 
 ## Checking for missing values
 
-na_counts <- sort(colSums(is.na(df_2019_2021)), decreasing = TRUE)
+na_counts <- sort(colSums(is.na(df_2019_2022)), decreasing = TRUE)
 na_counts[na_counts > 0]
 
 ## Removing all assets that have number of NA > 1 for time period
 
-na_counts <- colSums(is.na(df_2019_2021))
+na_counts <- colSums(is.na(df_2019_2022))
 keep_cols <- names(na_counts)[na_counts <= 1]
 keep_cols <- union("X", setdiff(keep_cols, "X"))  # ensure X stays first/kept
-df_clean <- df_2019_2021 %>% select(all_of(keep_cols))
+df_clean <- df_2019_2022 %>% select(all_of(keep_cols))
 
 ## Interpolating/Extrapolating the two missing values for the two assets with only one value missing
 
